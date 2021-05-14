@@ -1,0 +1,390 @@
+---
+title: "V1-UWF-Dashboard-PAM"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set()
+library(flexdashboard)
+```
+
+```{r eval=FALSE, include=FALSE}
+library(readr)
+library(dplyr)
+STU_ENROLLMENT_SPRING21 <- read_csv("G:/Shared drives/HMCSE-PAM Lab/DATA 202101/202101/STU_ENROLLMENT_SPRING21.csv") %>% 
+  filter(Stu_DEMO_DATA_SOURCE =="SIF") %>% 
+  filter(Stu_AdmissionTermCode >= 200808)
+STUDENT_DEGREE_SPRING21 <- read_csv("G:/Shared drives/HMCSE-PAM Lab/DATA 202101/202101/STUDENT_DEGREE_SPRING21.csv")
+ENROLLMENTS_SPRING21 <- read_csv("G:/Shared drives/HMCSE-PAM Lab/DATA 202101/202101/ENROLLMENTS_SPRING21.csv")
+COURSE_STUDENT_INSTRUCTION_SPRING21 <- read_csv("G:/Shared drives/HMCSE-PAM Lab/DATA 202101/202101/COURSE_STUDENT_INSTRUCTION_SPRING21.csv")
+FINANCIAL_AID_AWARDS_SPRING21 <- read_csv("G:/Shared drives/HMCSE-PAM Lab/DATA 202101/202101/FINANCIAL_AID_AWARDS_SPRING21.csv")
+
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+FTIC_all <- STU_ENROLLMENT_SPRING21 %>% 
+  filter( (Stu_StudentType == "Beginner - FTIC"| Stu_StudentType == "Beginner FTIC From Summer") & Stu_AdmissionRecentTypeCode == "B" & Stu_LoadBOGFTPT == "Full Time") %>% 
+  select( STU_ID, Stu_DEMO_TIME_FRAME, Stu_Term, Stu_StudentType,Stu_StudentTypeCode,Stu_AdmissionTerm, Stu_AdmissionTermCode, Stu_LoadBOGFTPT, contains("college"), contains("department"),contains("program"), contains("totalUni"), contains("age"),contains("ethnicity"),contains("gender")) %>% 
+  filter(str_detect(Stu_Term, "Fall...")) %>% group_by(STU_ID) %>%  unique() %>% 
+  mutate(cohort = str_extract(Stu_DEMO_TIME_FRAME, "^.{4}")) %>% 
+  mutate(APR1_term = Stu_DEMO_TIME_FRAME+100)
+colnames(FTIC_all) <- paste("ENTRY", colnames(FTIC_all), sep="_")
+
+### GPA
+FTIC_GPA <- STU_ENROLLMENT_SPRING21 %>% 
+  group_by(STU_ID) %>% 
+  filter(Stu_ClassificationCode <= 4) %>% 
+  select(STU_ID, Stu_DEMO_TIME_FRAME, Stu_Term,Stu_LoadBOGFTPT,contains("college"), contains("department"), contains("program"), 
+         contains("total")) %>% 
+  mutate(UWFGPA = round(Stu_TotalInstGradePoints/Stu_TotalInstHours, digit=2))
+colnames(FTIC_GPA) <- paste("GPA", colnames(FTIC_GPA), sep="_")
+
+ 
+### degree
+
+FTIC_deg <- STUDENT_DEGREE_SPRING21 %>% 
+    select(STU_ID,Deg_DEMO_TIME_FRAME, contains("termgranted"), contains("college"), contains("deparment"),contains("program"),contains("desc"),Deg_MajorIndicator) %>% 
+    group_by(STU_ID) %>%
+    filter(Deg_Desc == "Bachelor" & Deg_DEMO_TIME_FRAME >= 200808 & Deg_MajorIndicator == 1) %>% 
+    filter(Deg_TermGranted == min(Deg_TermGranted)) %>%
+    mutate(deg_index=row_number()) %>% 
+    filter(deg_index ==1)
+colnames(FTIC_deg) <- paste("DEG", colnames(FTIC_deg), sep="_")
+FTIC_deg[which(duplicated(FTIC_deg$STU_ID)),]
+
+### merge deg enc 
+
+ FTIC_enc_deg <- merge(FTIC_all, FTIC_GPA , by.x="ENTRY_STU_ID",by.y="GPA_STU_ID", all.x = T) %>% 
+   group_by(ENTRY_STU_ID) %>% arrange(GPA_Stu_DEMO_TIME_FRAME) %>% 
+   filter(GPA_Stu_DEMO_TIME_FRAME >= ENTRY_Stu_DEMO_TIME_FRAME ) #filter out terms before FTIC
+ 
+ FTIC_enc_deg1 <- merge(FTIC_enc_deg, FTIC_deg, by.x="ENTRY_STU_ID", by.y="DEG_STU_ID", all.x = T) %>%
+   mutate(DEG_exp_Time = ENTRY_Stu_DEMO_TIME_FRAME + 397) %>% 
+   group_by(ENTRY_STU_ID) %>% 
+   arrange(GPA_Stu_DEMO_TIME_FRAME) %>% 
+   mutate(GPA_index = row_number()) %>% 
+   mutate(APR_GPA_Term = ifelse(GPA_UWFGPA >= 2.00, "UWFGPA>=2.00", "UWFGPA<2.00")) %>% 
+   mutate(APR1_GPA = ifelse( (ENTRY_APR1_term == GPA_Stu_DEMO_TIME_FRAME & APR_GPA_Term == "UWFGPA >=2.00"), "Yes", "No" )) %>% 
+   mutate(RetentionRate1 = ifelse( (ENTRY_APR1_term == GPA_Stu_DEMO_TIME_FRAME & APR_GPA_Term >=0), "Yes", "No"))
+ 
+ 
+ 
+ 
+addmargins(table(FTIC_enc_deg1$ENTRY_cohort, FTIC_enc_deg1$RetentionRate1)) 
+FTIC_enc_deg1[FTIC_enc_deg1$ENTRY_STU_ID=="FFE884481097A0F73D983589E06D55D88ACA9C7F",] 
+write.csv(FTIC_enc_deg1, "FTIC_Dashboard_infoset202008.csv")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readr)
+FTIC_Dashboard_infoset202008 <- read_csv("FTIC_Dashboard_infoset202008.csv", 
+    col_types = cols(X1 = col_skip()))
+
+```
+
+
+
+ FTIC Enrollments Trend
+======================================================================
+
+
+Row {.tabset .tabset-fade  }
+-----------------------------------------------------------------------
+
+### UWF - Enrollments
+
+```{r}
+library(dplyr)
+UWFenc <- FTIC_Dashboard_infoset202008 %>%
+  filter(GPA_index ==1)   
+
+library(plotly)
+uwf_enc_fig <- UWFenc %>% 
+  count(ENTRY_cohort) %>% 
+  plot_ly(x= ~ENTRY_cohort, y=~n, type="bar",marker = list(color = "rgb(22,96,169)",
+                            line = list(color = "rgb(0,0,169,)",
+                                        width = 2))) #color=~ENTRY_Stu_College)
+uwf_enc_fig
+
+
+```
+
+
+### Colleges
+
+```{r}
+
+college_enc_fig <- UWFenc %>% 
+  count(ENTRY_cohort, ENTRY_Stu_College) %>% 
+  plot_ly( x=~ENTRY_cohort, y= ~n, type="bar",color=~ENTRY_Stu_College)
+
+college_enc_fig
+  
+```
+
+### Departments
+
+```{r}
+depart_enc_fig <- UWFenc %>% 
+  count(ENTRY_Stu_Department,ENTRY_cohort)
+colnames(depart_enc_fig) <- c("Entry_Departments","Cohort",  "Counts")
+  
+
+library(DT)
+datatable(depart_enc_fig, extensions = "Buttons",caption = "Enrollments by Departments ",
+          filter = "top",
+          options = list(dom="Blfrtip",buttons=c("copy","csv","excel","pdf","print"), lengthMenu=list(c(10,25,50,-1), c(10,25,50,"All")),pageLength=25))
+
+```
+
+### Programs
+
+```{r}
+program_enc_table <- UWFenc %>% 
+  count(ENTRY_Stu_College,ENTRY_Stu_Department,ENTRY_Stu_ProgramCIPDesc, ENTRY_cohort) 
+  colnames(program_enc_table) <- c("ENTRY_College","ENTRY_Department", "Entry_Program" ,"Cohort", "Counts")
+
+datatable(program_enc_table, extensions = "Buttons", caption = "Enrollments by Program CIP Desc", filter = "top",
+          options = list(dom= "Blfrtip", buttons =c("copy", "csv","excel","pdf","print"), lengthMenu =list(c(10,25,50,-1), c(10,25,50,"All")), pageLength=25))
+
+
+```
+ 
+ 
+UWF APR Trend
+======================================================================
+
+
+Row {.tabset   .tabset-fade  }
+-----------------------------------------------------------------------
+
+
+### UWF - APR
+
+```{r}
+# cohort size
+UWFenc_count <- FTIC_Dashboard_infoset202008 %>%
+  filter(GPA_index ==1) %>% 
+  count(ENTRY_cohort)
+colnames(UWFenc_count) <- c("cohort", "size")
+
+# APR size
+UWFenc_apr <- FTIC_Dashboard_infoset202008 %>%
+  filter(APR1_GPA == "Yes") %>%
+  group_by(ENTRY_cohort,APR1_GPA) %>% 
+  dplyr::summarise(Counts=n())
+  colnames(UWFenc_apr) <- c("cohort","APR","apr_Counts")
+
+# table  
+UWF_apr <- merge(UWFenc_count, UWFenc_apr, by="cohort", all.x = T) %>% 
+  mutate(APR = round(apr_Counts / size, digits = 4)*100) 
+# retention 
+UWF_retention <-  FTIC_Dashboard_infoset202008 %>% 
+  filter(RetentionRate1 == "Yes") %>% 
+  group_by(ENTRY_cohort, RetentionRate1) %>% 
+  dplyr::summarise(Counts=n())
+colnames(UWF_retention) <- c("cohort","retentionRate","reten_Counts")
+#table
+UWF_apr_reten <- merge(UWF_apr, UWF_retention, by="cohort", all.x = T) %>% 
+  mutate(Retention =round(reten_Counts/size, digits = 4)*100)
+
+UWF_apr_Id <- c("Cohort", "size", "APRIR")
+UWF_apr_Id$Cohort <-  (2008:2019) 
+UWF_apr_Id$size <- c(NA,NA,NA,NA,1623,1315,1385,1319,1284,1074,1088,1049)
+UWF_apr_Id$APRIR <- c(NA,NA,NA,NA,NA,NA,898,924,944,858,874,859)
+UWF_apr_Id <- as.data.frame(UWF_apr_Id)
+UWF_apr_Id$APR_IR <- round(UWF_apr_Id$APRIR/UWF_apr_Id$size*100, digits = 2)
+IR_apr <-  as.data.frame(UWF_apr_Id) %>% 
+  select( cohort="Cohort", APR_IR)
+
+UWF_apr_reten_IR <- merge(UWF_apr_reten,IR_apr, by="cohort", all.x = T )
+#plot
+library(plotly)
+UWF_apr_retnetion_plot <-plot_ly(UWF_apr_reten_IR, x=~cohort, y=~APR, name = "APR-PAM%", type = "scatter", mode="lines",
+                                 line=list(color ='rgb(22, 96, 222)', width = 4)) %>% 
+  add_trace( y=~Retention, name="Retention Rate-PAM%", line=list(color='rgb(222, 96, 20)', width = 4, dash = 'dot'))  %>% 
+  add_trace( y=~APR_IR, name="APR-IR%", line=list(color='rgb(20, 9222, 20)', width = 4, dash = 'dot'))
+UWF_apr_retnetion_plot
+
+```
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+# IR size
+library(readr)
+CSE_ALL_ENR_up2020 <- read_csv("G:/Shared drives/HMCSE-PAM Lab/Jay's Space/DATA/CSE_ALL_ENR_up2020.csv", 
+    col_types = cols(X1 = col_skip()))
+addmargins(table(CSE_ALL_ENR_up2020$COHORT_YEAR, CSE_ALL_ENR_up2020$APR))
+```
+
+### Colleges
+
+```{r message=FALSE, warning=FALSE}
+#cohort size
+UWFenc_college <- FTIC_Dashboard_infoset202008 %>% 
+  filter(GPA_index == 1) %>% 
+  count(ENTRY_cohort, ENTRY_Stu_College) 
+colnames(UWFenc_college) <- c("cohort", "college","size")
+
+#apr size
+UWF_apr_college <- FTIC_Dashboard_infoset202008 %>% 
+  filter(APR1_GPA == "Yes") %>% 
+  count(ENTRY_cohort, ENTRY_Stu_College)
+colnames(UWF_apr_college) <- c("cohort","college","col_apr_count")
+
+UWF_rent_college <- FTIC_Dashboard_infoset202008 %>% 
+  filter(RetentionRate1 == "Yes") %>% 
+  count(ENTRY_cohort, ENTRY_Stu_College)
+colnames(UWF_rent_college) <- c("cohort","college","col_rent_count")
+
+
+
+UWF_apr_college_all <- merge(UWFenc_college, UWF_apr_college, by=c("cohort","college"), all.x = T) %>% 
+  mutate(UWF_apr_college = round(col_apr_count/size, digits = 4)*100)
+
+
+UWF_apr_college_all1 <- merge(UWF_apr_college_all, UWF_rent_college, by=c("cohort","college"), all.x = T) %>% 
+  mutate(UWF_rentRate_college = round(col_rent_count/size, digits = 4)*100) %>% 
+  filter(cohort <= 2019)
+
+
+
+UWF_apr_reten_col <- plot_ly(UWF_apr_college_all1, x=~cohort, y=~UWF_apr_college, type=~'bar',name='UWF College APR') %>% 
+   #add_trace(y=~UWF_rentRate_college, name='UWF College Retention Rate') %>% 
+   layout(yaxis = list(title="UWF College APR and Retention Rate %"), xaxis=list(title="Cohort"),barmode='group') 
+   
+
+ apr_college_fig <-  UWF_apr_college_all %>% 
+   select(Cohort ="cohort", GPA_College ="college", size, col_apr_count, APR_by_Entry_College = "UWF_apr_college") %>% 
+  plot_ly( x=~Cohort, y= ~APR_by_Entry_College, type="bar",color=~GPA_College)
+
+apr_college_fig
+
+```
+
+### Departments
+
+```{r}
+ 
+UWFenc_apr_depart <- FTIC_Dashboard_infoset202008 %>%
+  filter(APR1_GPA == "Yes") %>%
+  group_by(ENTRY_Stu_Department,ENTRY_cohort,APR1_GPA) %>% 
+  dplyr::summarise(Counts=n())
+  colnames(UWFenc_apr_depart) <- c("Entry_Departments","Cohort","APR","apr_Counts")
+  
+UWF_apr_depart <- merge(depart_enc_fig, UWFenc_apr_depart, by=c("Entry_Departments","Cohort"), all.x = T) %>% 
+  mutate(APR = round(apr_Counts / Counts, digits = 4)*100) %>% 
+  select(Entry_Departments, Cohort, Counts, APR_Counts="apr_Counts", APR)
+
+datatable(UWF_apr_depart, extensions = "Buttons", caption = "APR by Entry Departments", filter = "top",
+          options = list(dom= "Blfrtip", buttons =c("copy", "csv","excel","pdf","print"), lengthMenu =list(c(10,25,50,-1), c(10,25,50,"All")), pageLength=25) )
+
+
+```
+
+### Programs
+
+```{r}
+```
+
+
+Program Changes
+================================================================================================
+
+
+Row { .tabset  .tabset-fade}
+---------------------------------------------------------------------------------------------
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readr)
+V2_ID_ENC_DEG_DATA <- as.data.frame( read.csv("C:/PAM_Jay/ProgramChanges/V2_ID_ENC_DEG_DATA.csv"))
+
+library(networkD3)
+library(dplyr)
+V2_ID_ENC_DEG_DATA[V2_ID_ENC_DEG_DATA$Begin_deprt_code=="0","Begin_deprt_code"] <- "NotDecided"
+V2_ID_ENC_DEG_DATA[V2_ID_ENC_DEG_DATA$Stu_DepartmentCode=="0","Stu_DepartmentCode"] <- "NotDecided"
+
+
+
+```
+
+### FTIC Flow Between Colleges
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(networkD3)
+library(dplyr)
+sankey2data <- V2_ID_ENC_DEG_DATA %>% #filter(MaxCCTimes>0) %>% 
+  group_by(Begin_col_desc,Stu_College ) %>% dplyr::summarise(Count=n()) %>% 
+  filter(Count>=5)
+
+sankey2data <- as.data.frame(sankey2data)
+colnames(sankey2data) <- c("source","target","value")
+sankey2data$target <-  paste(sankey2data$target, " ", sep="")
+#create nodes
+nodes <- data.frame(name = c(as.character(sankey2data$source),as.character(sankey2data$target)) %>% unique())
+#reforeme the data
+
+sankey2data$IDsource =match(sankey2data$source, nodes$name)-1
+sankey2data$IDtarget =match(sankey2data$target, nodes$name)-1
+
+test_college  <- sankeyNetwork(Links = sankey2data, Nodes = nodes,
+                                    Source = "IDsource", Target = "IDtarget",
+                                    Value ="value", NodeID ="name",units = "Count",
+                                    fontSize = 20, nodeWidth = 30, sinksRight=FALSE, nodePadding = 30
+                                    )
+
+test_college
+
+```
+
+###  FTIC Flow Between Departments
+
+```{r echo=FALSE}
+library(networkD3)
+library(dplyr)
+sankeydata  <- V2_ID_ENC_DEG_DATA %>%  group_by(STU_ID) %>% filter(Stu_DEMO_TIME_FRAME == max(Stu_DEMO_TIME_FRAME))
+
+sankey1data <- sankeydata %>% filter(MaxCDTimes>0) %>%  
+  filter(Begin_deprt_desc != Stu_Department) %>% 
+  group_by(Begin_deprt_desc,Stu_Department) %>% dplyr::summarise(Count=n()) %>% 
+  filter(Count>=5)
+
+sankey1data <- as.data.frame(sankey1data)
+colnames(sankey1data) <- c("source","target","value")
+sankey1data$target <-  paste(sankey1data$target, " ", sep="")
+
+#create nodes
+nodes <- data.frame(name = c(as.character(sankey1data$source),as.character(sankey1data$target)) %>% unique())
+#reforeme the data
+
+sankey1data$IDsource =match(sankey1data$source, nodes$name)-1
+sankey1data$IDtarget =match(sankey1data$target, nodes$name)-1
+
+test_department  <- sankeyNetwork(Links = sankey1data, Nodes = nodes,
+                                    Source = "IDsource", Target = "IDtarget",
+                                    Value ="value", NodeID ="name",units = "Count",
+                                    fontSize = 15, nodeWidth = 30
+                                    )
+
+test_department
+
+```
+
+FTIC - On-Track
+==========================================================================================
+
+Row { .tabset  .tabset-fade}
+-----------------------------------------------------------------------------------------
+
+### ???
+
+```{r}
+
+```
+
+
+
+
+
